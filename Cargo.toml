@@ -1,0 +1,9 @@
+[package]
+name = "ranked-digit-layouts"
+version = "0.1.0"
+edition = "2021"
+description = "A Generalized Tensor Layout Algebra over Prime Fields"
+authors = ["Compiler Team"]
+
+[dependencies]
+thiserror = "1.0"
