@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod builders;
+pub mod render;
 pub mod error;
 pub mod layout;
 pub mod math_utils;
