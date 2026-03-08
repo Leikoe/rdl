@@ -1,0 +1,339 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{openproblem}{Open Problem}
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\F}{\mathbb{F}}
+\newcommand{\GL}{\mathrm{GL}}
+\newcommand{\im}{\mathrm{im}}
+\newcommand{\rank}{\mathrm{rank}}
+\newcommand{\unrank}{\mathrm{unrank}}
+
+\title{\textbf{Ranked Digit Layouts}\\[4pt]
+\large An Algebra for Tensor Memory Mapping\\
+with Arbitrary Dimension Sizes}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+Linear Layouts over $\F_2$ give tensor compilers closed-form resolution of memory mapping, vectorization, and hardware lowering---but only when every dimension is a power of two.
+We define \emph{Ranked Digit Layouts}: factor every dimension into primes, operate on the resulting digit stream with a small set of typed transforms, and decode.
+The framework handles arbitrary dimension sizes exactly, composes cleanly, and admits $O(1)$-in-volume algorithms for contiguity, intersection, and kernel analysis.
+We give a constructive algorithm for provably optimal bank-conflict-free swizzle synthesis within the algebra.
+\end{abstract}
+
+%% ========================================================================
+\part*{I\quad The Problem}
+%% ========================================================================
+
+\section{Setting}
+
+A tensor compiler must map three coordinate spaces onto one another: logical tensors, physical memory, and hardware topology.
+Over $\F_2$, every coordinate is a bit vector, every layout is a binary matrix, and composition, inversion, intersection, and contiguity analysis all reduce to linear algebra over $\F_2$ in time independent of the tensor volume.
+
+The cost: every logical dimension must be padded to a power of two.
+A $48 \times 48$ tile becomes $64 \times 64$, wasting $56\%$ of memory.
+
+\begin{openproblem}
+Does there exist an algebraic layout representation that preserves the analytical tractability of $\F_2$ linear layouts while natively supporting arbitrary dimension sizes?
+\end{openproblem}
+
+\noindent We ask for nine properties, grouped into three classes.
+
+\medskip
+\noindent\textbf{I.\;Structural.}\;
+\textbf{(1)}~Domain/codomain agnosticism: no padding, no masking.
+\textbf{(2)}~Universal composition: layouts compose within the algebra.
+\textbf{(3)}~Shape closure: transpose, reshape, and broadcast are closed operations on layouts.
+
+\medskip
+\noindent\textbf{II.\;Analytical tractability}\,(all $O(1)$ in the tensor volume).
+\textbf{(4)}~Tractable intersections for data routing.
+\textbf{(5)}~Tractable kernels for broadcast detection.
+\textbf{(6)}~Tractable contiguity for vectorization.
+
+\medskip
+\noindent\textbf{III.\;Constructive synthesis.}\;
+\textbf{(7)}~Intrinsic factorization: algebraic division by a hardware primitive.
+\textbf{(8)}~Optimal swizzle synthesis with automorphic closure.
+\textbf{(9)}~Topology-aware cost resolution.
+
+\medskip
+\noindent Solving this bridges the geometric flexibility of the Polyhedral model and the microscopic efficiency of Linear Layouts over~$\F_2$.
+
+%% ========================================================================
+\part*{II\quad The Construction}
+%% ========================================================================
+
+\section{Spaces and Digit Streams}
+
+\begin{definition}[Space]
+A \emph{space} is a finite product of cyclic groups
+$A = \Z_{n_0} \times \Z_{n_1} \times \cdots \times \Z_{n_{k-1}}$
+with $|A| = \prod_i n_i$.
+The bounds $n_i$ are arbitrary positive integers.
+\end{definition}
+
+\begin{definition}[Digit stream]
+Factor each $n_i$ into primes: $n_i = p_{i,0}\, p_{i,1}\cdots p_{i,\,r_i-1}$.
+A coordinate $c_i \in \Z_{n_i}$ is encoded as digits $(d_0,\ldots,d_{r_i-1})$ with $d_j \in \Z_{p_{i,j}}$ via the standard little-endian mixed-radix representation:
+\[
+c_i = d_0 + p_{i,0}\,d_1 + p_{i,0}\,p_{i,1}\,d_2 + \cdots
+\]
+Concatenating the digit vectors of all axes gives a flat \emph{digit stream} of length $R = \sum_i r_i$.
+The map $\rank: A \to \Z_{p_0}\times\cdots\times\Z_{p_{R-1}}$ is a bijection; its inverse is $\unrank$.
+\end{definition}
+
+\begin{remark}
+Every digit lives in a prime field $\F_p$.
+There are no carries between digit positions, because each position is reduced independently modulo its own prime.
+This is the key difference from working over $\Z_N$ directly.
+\end{remark}
+
+\section{Transforms}
+
+A \emph{transform} maps one digit stream to another.
+Six primitives suffice.
+
+\begin{definition}[Identity / Refactor]
+$T(\mathbf{d}) = \mathbf{d}$.
+A \emph{Refactor} changes only how digits are grouped into axes; the stream itself is unchanged.
+Invertible; kernel size~$1$.
+\end{definition}
+
+\begin{definition}[Permute]
+A bijection defined by a permutation $\sigma$: $T(\mathbf{d})_i = d_{\sigma(i)}$.
+Axis transposition is a special case.
+Invertible; kernel size~$1$.
+\end{definition}
+
+\begin{definition}[Project]
+Drops digit positions outside a keep-set $K$: $T(\mathbf{d})_i = d_{K_i}$.
+Non-injective; kernel size $\prod_{i\notin K} p_i$.
+Models broadcasting and slicing.
+\end{definition}
+
+\begin{definition}[Embed]
+Places source digits at specified positions in a larger stream, filling the rest with constants.
+Right inverse of Project.
+\end{definition}
+
+\begin{definition}[BlockAffine]
+Selects digit positions $P$ sharing a common prime radix $p$ and applies an affine map:
+\[
+T(\mathbf{d})_{P_i} = \Bigl(\sum_j M_{ij}\,d_{P_j} + c_i\Bigr) \bmod p,
+\qquad M \in \GL(|P|, \F_p).
+\]
+Digits outside $P$ pass through.
+XOR swizzle is the case $p=2$, $c=0$.
+Invertible; kernel size~$1$.
+\end{definition}
+
+\begin{definition}[Compose]
+Sequential application: $(T_2 \circ T_1)(\mathbf{d}) = T_2(T_1(\mathbf{d}))$.
+Requires output radices of $T_1$ to match input radices of $T_2$.
+Associative; forms a monoid with Identity.
+\end{definition}
+
+\section{Ranked Digit Layouts}
+
+\begin{definition}
+A \emph{ranked digit layout} $L: A \to B$ is a triple $(A,\,T,\,B)$ where $T$ is a transform whose input radices match the digit stream of $A$ and whose output radices match the digit stream of $B$.
+The induced coordinate map is
+$L(c) = \unrank_B(T(\rank_A(c)))$.
+\end{definition}
+
+When $B = \Z_N$ is flat, $L$ gives a memory address.
+When $A$ is a hardware thread space and $B$ is a tile, $L$ describes a thread assignment.
+
+\section{Composition and Inversion}
+
+Given $L_1: A \to B$ and $L_2: B \to C$, the composition $L_2 \circ L_1: A \to C$ is defined by composing transforms.
+Inversion of $L$ exists when $T$ is invertible.
+
+\emph{Algebraic division.}
+Given the composed layout $L \circ H$ and an invertible hardware map~$H$, the logical layout is recovered as $(L \circ H) \circ H^{-1} = L$.
+This is the mechanism for hardware lowering: given a hardware primitive, divide it out.
+
+\section{Analytical Contiguity}
+
+\begin{proposition}
+For $L: A \to \Z_N$ and a logical axis $a$, the contiguity along $a$---the largest $w$ such that stepping through the first $w$ elements along $a$ from the origin produces consecutive flat addresses---is computable in $O(\Omega(n_a))$ transform evaluations.
+\end{proposition}
+
+\begin{proof}
+Walk the digits of axis $a$ from least to most significant.
+At digit $d$ with radix $r_d$:
+\begin{enumerate}[nosep]
+\item Evaluate the flat address with only digit $d$ set to $1$; call the stride $s_d$.
+\item If $s_d$ does not equal the running expected stride, stop.
+\item Verify linearity: the address with digit $d$ set to $r_d - 1$ must equal $(r_d - 1)\,s_d$ above the base.
+\item Multiply the contiguity width by $r_d$ and update the expected stride.
+\end{enumerate}
+Non-linearity at digit $d$ implies non-contiguity at all higher digits, because higher digits control strides that are multiples of the current position weight.
+Hence the procedure returns the \emph{largest} contiguous width.
+The number of steps is $\Omega(n_a)$, the number of prime factors of the axis size---logarithmic in~$n_a$.
+\end{proof}
+
+\section{Swizzle Synthesis}
+
+Let $L: A \to V$ be a layout into physical memory $V = \Z_N$, with $B$ memory banks indexed by $a \bmod B$ where $B \mid N$.
+A warp of $W$ threads accesses $V$ simultaneously.
+We seek a bijective automorphism $S: V \to V$ such that $S \circ L$ is conflict-free and remains in the algebra.
+
+\subsection*{Setup}
+
+Factor $B$ into primes.
+For each prime $p$, let $n_p = v_p(N)$ (the number of radix-$p$ digits in $V$) and $b_p = v_p(B)$.
+The bank index, read in digit space, is a projection $E_p: \F_p^{n_p} \to \F_p^{b_p}$ keeping the $b_p$ least-significant radix-$p$ digits.
+
+The composed map $L \circ H$ (where $H$ is the hardware thread assignment) gives each thread a flat address whose radix-$p$ component is affine in the thread's radix-$p$ digits.
+Let $\varphi_p: \F_p^{w_p} \to \F_p^{n_p}$ be the linear part.
+Define the \emph{thread subspace} $\Delta_p = \im(\varphi_p)$.
+
+Two threads conflict in the $p$-component iff $E_p(\varphi_p(t_1) - \varphi_p(t_2)) = 0$, i.e.\ their address difference lies in $\ker(E_p) \cap \Delta_p$.
+
+\subsection*{The Result}
+
+\begin{theorem}[Optimal swizzle bound]
+\label{thm:swizzle}
+A BlockAffine swizzle $S$ with matrix $M_p \in \GL(n_p, \F_p)$ yields a conflict factor for prime $p$ of
+\[
+C_p \;=\; p^{\;\dim(\ker(E_p \cdot M_p)\,\cap\,\Delta_p)}.
+\]
+The minimum achievable conflict factor is
+\[
+C_p^* \;=\; p^{\;\max(0,\; d_p - b_p)},
+\qquad d_p = \dim(\Delta_p).
+\]
+The total conflict factor across all primes is $C = \prod_p C_p$.
+\end{theorem}
+
+\begin{proof}
+The map $E_p \cdot M_p$ restricted to $\Delta_p$ is a linear map from a $d_p$-dimensional space to a $b_p$-dimensional space.
+Its kernel has dimension at least $\max(0,\, d_p - b_p)$ by the rank--nullity theorem.
+Hence $C_p \ge p^{\max(0,\,d_p - b_p)}$.
+The construction below achieves this bound.
+\end{proof}
+
+\subsection*{Construction}
+
+For each prime $p$ independently:
+
+\begin{enumerate}[nosep]
+\item Compute a basis $\{v_1,\ldots,v_{d_p}\}$ of $\Delta_p$.
+\item Let $k = \min(d_p,\, b_p)$.
+Pick $k$ linearly independent targets $u_1,\ldots,u_k \in \F_p^{b_p}$.
+\item For each $u_i$, find a preimage $w_i$ with $E_p\,w_i = u_i$ (possible since $E_p$ is surjective).
+\item Define $M_p$ by $M_p\,v_i = w_i$ for $i = 1,\ldots,k$.
+Extend to a basis of $\F_p^{n_p}$ and complete $M_p$ to a full-rank matrix.
+\end{enumerate}
+
+By construction, $E_p \cdot M_p$ maps $\{v_1,\ldots,v_k\}$ to independent vectors, so $\ker(E_p \cdot M_p) \cap \Delta_p$ has the minimal possible dimension.
+The cost is $O(n_p^3)$ field operations, with $n_p = O(\log_p N)$---independent of the tensor volume.
+
+\begin{corollary}[GPU XOR swizzle recovery]
+For $B = 32 = 2^5$, $W = 32 = 2^5$: only $p = 2$ is relevant, $b_2 = 5$, and generically $d_2 = 5$.
+Since $d_2 = b_2$, we get $C_2^* = 1$: a zero-conflict swizzle exists.
+The matrix $M_2$ is a binary invertible matrix---XOR swizzling.
+\end{corollary}
+
+\subsection*{Closure}
+
+The swizzle $S$ is a BlockAffine automorphism on $V$'s digit stream.
+Composing with $L$ appends a BlockAffine to the transform chain, remaining in the algebra.
+Contiguity, kernel, and image analyses apply unchanged to $S \circ L$.
+
+%% ========================================================================
+\part*{III\quad Assessment}
+%% ========================================================================
+
+\section{Property Satisfaction}
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}clcc@{}}
+\toprule
+\textbf{\#} & \textbf{Property} & \textbf{Status} & \textbf{Section} \\
+\midrule
+1 & Domain/codomain agnosticism & \checkmark & 2 \\
+2 & Universal composition & \checkmark & 4 \\
+3 & Shape closure & \checkmark & 3 \\
+4 & Tractable intersections & \checkmark & 3, 5 \\
+5 & Tractable kernels & \checkmark & 3 \\
+6 & Tractable contiguity & \checkmark & 5 \\
+7 & Intrinsic factorization & \checkmark & 4 \\
+8 & Swizzle synthesis \& closure & \checkmark & 6 \\
+9 & Topology-aware cost & \textit{open} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{An Example: Reshape Without Padding}
+
+Reshape $[6, 10] \to [12, 5]$, row-major.
+
+\medskip
+\noindent\emph{Source.}\;
+Axis $0$: $6 = 2 \cdot 3$, digits $[\Z_2, \Z_3]$.\;
+Axis $1$: $10 = 2 \cdot 5$, digits $[\Z_2, \Z_5]$.\\
+Stream: $(\Z_2, \Z_3, \Z_2, \Z_5)$.
+
+\medskip
+\noindent\emph{Target.}\;
+Axis $0$: $12 = 2 \cdot 2 \cdot 3$, digits $[\Z_2, \Z_2, \Z_3]$.\;
+Axis $1$: $5$, digits $[\Z_5]$.\\
+Stream: $(\Z_2, \Z_2, \Z_3, \Z_5)$.
+
+\medskip
+\noindent Under row-major ordering, the flat index is preserved.
+The reshape is a Permute (moving the $\Z_2$ digit from axis~1 into axis~0) composed with a Refactor (regrouping axis boundaries).
+The digit stream is rearranged; no ring structure changes; no padding is introduced.
+
+\section{What Remains Open}
+
+\textbf{Topology-aware cost resolution.}
+When routing between spaces admits multiple valid solutions, the algebra does not yet provide a mechanism to minimize a hardware-topology-aware cost function.
+This requires modeling physical spaces as hierarchical metric spaces and integrating cost-weighted selection into the underdetermined solve.
+
+\medskip
+\noindent\textbf{Canonicalization.}
+Two composed transforms may be extensionally equal without being syntactically equal.
+A polynomial-time canonical form for arbitrary transform chains has not been established.
+
+\medskip
+\noindent\textbf{Large primes.}
+A dimension of prime size $p$ produces a single digit in $\F_p$.
+The automorphism group is thin ($p-1$ scalar multiplications), limiting swizzle options.
+In practice, ML tensor shapes are almost always highly composite, so this may be acceptable.
+
+\bigskip
+\hrule
+\bigskip
+
+\noindent When all dimension sizes are powers of two, every digit has radix~$2$, BlockAffine reduces to binary matrix--vector multiply, and the framework collapses exactly to Linear Layouts over~$\F_2$.
+Ranked Digit Layouts are the natural generalization.
+
+\end{document}
